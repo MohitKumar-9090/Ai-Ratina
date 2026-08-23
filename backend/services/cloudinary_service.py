@@ -55,6 +55,7 @@ def upload_image(file_source: bytes | str, folder: str, public_id: str = None) -
             "folder": folder,
             "overwrite": True,
             "resource_type": "image",
+            "timeout": 15,  # Non-blocking timeout to prevent long-running hangs
         }
         if public_id:
             options["public_id"] = public_id

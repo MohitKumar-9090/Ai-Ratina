@@ -33,8 +33,8 @@ export async function checkHealth() {
  * @returns {Promise<object>} – normalized result
  */
 export async function analyzeImage(file, patientData = {}) {
-  console.log('[API] API Base URL:', API_URL)
-  console.log('[API] Analyze endpoint:', `${API_URL}/api/analyze`)
+  const analyzeUrl = `${API_URL}/api/analyze`
+  console.log('[API] Analyze request URL:', analyzeUrl)
   console.log('[API] Selected file:', file?.name)
 
   const formData = new FormData()
@@ -46,38 +46,56 @@ export async function analyzeImage(file, patientData = {}) {
   if (patientData.patientId) formData.append('patient_id', patientData.patientId)
   if (patientData.contact) formData.append('contact', patientData.contact)
 
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 120000)
+
   let res
   try {
-    res = await fetch(`${API_URL}/api/analyze`, {
+    res = await fetch(analyzeUrl, {
       method: 'POST',
       body: formData,
+      signal: controller.signal,
       // Do NOT set Content-Type header manually so the browser sets the multipart boundary automatically
     })
   } catch (err) {
-    console.error('[API] Fetch network error:', err)
-    throw new Error(`Unable to connect to the AI server. Please verify backend status at ${API_URL}.`)
+    console.error('[API] Error:', err)
+    if (err.name === 'AbortError') {
+      throw new Error('Analysis is taking too long. Please try again.')
+    }
+    throw new Error('Unable to connect to AI server.')
+  } finally {
+    clearTimeout(timeoutId)
   }
 
-  console.log('[API] Response status:', res.status, res.statusText)
+  console.log('[API] HTTP status:', res.status, res.statusText)
 
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}))
     console.error('[API] Response JSON (Error):', errData)
 
+    const backendError = errData.detail || errData.message
     if (res.status === 400) {
-      throw new Error(errData.detail || 'Invalid image or request.')
+      const err = new Error(backendError || 'Invalid image or request.')
+      console.error('[API] Error:', err)
+      throw err
     }
     if (res.status === 503) {
-      throw new Error(errData.detail || 'AI model is not loaded on the server.')
+      const err = new Error(backendError || 'AI model is not loaded on the server.')
+      console.error('[API] Error:', err)
+      throw err
     }
     if (res.status === 500) {
-      throw new Error(errData.detail || 'AI analysis failed on the server.')
+      const err = new Error(backendError || 'AI analysis failed on the server.')
+      console.error('[API] Error:', err)
+      throw err
     }
-    throw new Error(errData.detail || `Analysis request failed with HTTP ${res.status}`)
+    const genericErr = new Error(backendError || `Analysis request failed with HTTP ${res.status}`)
+    console.error('[API] Error:', genericErr)
+    throw genericErr
   }
 
   const data = await res.json()
-  console.log('[API] Response JSON (Success):', data)
+  console.log('[API] Response JSON:', data)
 
   return {
     id: data.record_id,
@@ -92,6 +110,8 @@ export async function analyzeImage(file, patientData = {}) {
     probabilities: data.probabilities,
     date: data.date || new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
     status: data.prediction.class_id === 0 ? 'Screened' : 'Review recommended',
+    image_url: data.image_url,
+    gradcam_url: data.gradcam_url,
   }
 }
 

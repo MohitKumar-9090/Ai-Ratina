@@ -8,6 +8,7 @@ import { saveScreeningToFirestore } from '../services/firestoreService'
 
 export default function Analyze({ image, setImage, setLatestResult }) {
   const [loading, setLoading] = useState(false)
+  const setIsAnalyzing = setLoading
   const [statusText, setStatusText] = useState('')
   const [error, setError] = useState('')
   const [serverHealth, setServerHealth] = useState({ status: 'checking', model_loaded: true })
@@ -50,14 +51,14 @@ export default function Analyze({ image, setImage, setLatestResult }) {
 
   const analyze = async () => {
     if (!isFormValid || loading) return
-    setLoading(true)
+    setIsAnalyzing(true)
     setError('')
     setStatusText('Analyzing retina...')
 
     let result = null
 
-    // ── Step 1: Run EfficientNet-B0 + Grad-CAM + Cloudinary via FastAPI ──
     try {
+      // ── Step 1: Run EfficientNet-B0 + Grad-CAM + Cloudinary via FastAPI ──
       result = await analyzeImage(image.file, {
         name: patientData.name,
         age: patientData.age,
@@ -66,40 +67,42 @@ export default function Analyze({ image, setImage, setLatestResult }) {
         contact: patientData.phone,
       })
       result.originalImage = image.preview
+
+      // ── Step 2: Save Metadata & Cloudinary URLs to Firestore ──
+      if (isFirebaseConfigured()) {
+        setStatusText('Saving screening...')
+        try {
+          await Promise.race([
+            saveScreeningToFirestore({
+              patientData: {
+                fullName: patientData.name,
+                age: patientData.age,
+                gender: patientData.gender,
+                caseId: patientData.patientId,
+                phone: patientData.phone,
+                notes: patientData.notes,
+              },
+              result,
+              imageUrl: result.image_url,
+              gradcamUrl: result.gradcam_url,
+            }),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('Firestore timeout')), 10000)
+            ),
+          ])
+        } catch (fsErr) {
+          console.warn('[Analyze] Firestore Save Warning:', fsErr)
+        }
+      }
+
+      setLatestResult(result)
+      navigate('/result', { state: { result } })
     } catch (err) {
       console.error('[Analyze] AI Analysis Error:', err)
-      setLoading(false)
-      setError(err.message || 'Unable to analyze this image. Please try again.')
-      return
+      setError(err.message || 'Unable to connect to AI server.')
+    } finally {
+      setIsAnalyzing(false)
     }
-
-    // ── Step 2: Save Metadata & Cloudinary URLs to Firestore ──
-    if (isFirebaseConfigured()) {
-      setStatusText('Saving screening...')
-      try {
-        await saveScreeningToFirestore({
-          patientData: {
-            fullName: patientData.name,
-            age: patientData.age,
-            gender: patientData.gender,
-            caseId: patientData.patientId,
-            phone: patientData.phone,
-            notes: patientData.notes,
-          },
-          result,
-          imageUrl: result.image_url,
-          gradcamUrl: result.gradcam_url,
-        })
-      } catch (fsErr) {
-        console.error('[Analyze] Firestore Save Warning:', fsErr)
-        // Requirement 13: Never show "Unable to analyze" when only Firestore fails
-        setError('Analysis completed, but patient record could not be saved.')
-      }
-    }
-
-    setLatestResult(result)
-    setLoading(false)
-    navigate('/result', { state: { result } })
   }
 
   return (

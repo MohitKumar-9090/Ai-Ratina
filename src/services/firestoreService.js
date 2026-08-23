@@ -26,6 +26,7 @@ export async function saveScreeningToFirestore({ patientData, result, imageUrl, 
   }
 
   const caseId = patientData.caseId || patientData.patientId || `RA-${Date.now()}`
+  console.log('[Firestore] Save started for caseId:', caseId)
   const normalizedAge = patientData.age ? parseInt(patientData.age, 10) : null
 
   // 1. Patient Document Upsert: patients/{caseId}
@@ -71,7 +72,7 @@ export async function saveScreeningToFirestore({ patientData, result, imageUrl, 
   }
 
   await setDoc(newScreeningRef, screeningPayload)
-  console.log('[Firestore] Created screening record:', screeningId)
+  console.log('[Firestore] Save completed for screening record:', screeningId)
 
   return {
     patientDocId: caseId,

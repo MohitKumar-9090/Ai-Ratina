@@ -151,8 +151,11 @@ async def analyze(
     - Saves record to SQLite database
     """
 
+    print(f"[ANALYZE] Request received. File: {file.filename if file else 'None'}, Patient: {name or 'N/A'}")
+
     # ── 1. Check model availability ──
     if not model_service.is_model_loaded():
+        print("[ANALYZE] Error: Model is not loaded.")
         raise HTTPException(
             status_code=503,
             detail="Model is not loaded. Place retinopathy_efficientnet_b0.pth inside backend/models/ and restart the server.",
@@ -161,7 +164,9 @@ async def analyze(
     # ── 2. Read uploaded file ──
     try:
         file_bytes = await file.read()
-    except Exception:
+        print(f"[ANALYZE] Image received ({len(file_bytes)} bytes).")
+    except Exception as exc:
+        print(f"[ANALYZE] Error reading uploaded file: {exc}")
         raise HTTPException(status_code=400, detail="Could not read uploaded file.")
 
     # ── 3. Validate ──
@@ -171,17 +176,22 @@ async def analyze(
         file_size=len(file_bytes),
     )
     if error:
+        print(f"[ANALYZE] Image validation failed: {error}")
         raise HTTPException(status_code=400, detail=error)
 
     # ── 4. Load & preprocess image ──
+    print("[ANALYZE] Image preprocessing started...")
     try:
         pil_image = load_image(file_bytes)
     except ValueError as exc:
+        print(f"[ANALYZE] Error loading image: {exc}")
         raise HTTPException(status_code=400, detail=str(exc))
 
     input_tensor = preprocess_image(pil_image)
+    print(f"[ANALYZE] Image preprocessing completed. Image size: {pil_image.size}, mode: {pil_image.mode}")
 
     # ── 5. Predict ──
+    print("[ANALYZE] Model inference started...")
     try:
         prediction = model_service.predict(
             input_tensor=input_tensor,
@@ -189,11 +199,14 @@ async def analyze(
             image_size=pil_image.size,
             image_mode=pil_image.mode,
         )
-    except Exception:
+        print(f"[ANALYZE] Model inference completed. Class: {prediction['class_name']} (ID: {prediction['class_id']}), Confidence: {prediction['confidence']} %")
+    except Exception as exc:
+        print(f"[ANALYZE] Prediction error: {exc}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Prediction failed. Please try again.")
 
     # ── 6. Grad-CAM Generation ──
+    print("[ANALYZE] Grad-CAM started...")
     try:
         model = model_service.get_model()
         gradcam_tensor = preprocess_image(pil_image)
@@ -203,7 +216,9 @@ async def analyze(
             original_pil_image=pil_image,
             class_idx=prediction["class_id"],
         )
-    except Exception:
+        print(f"[ANALYZE] Grad-CAM completed. Heatmap: {cam_files['heatmap_filename']}, Overlay: {cam_files['overlay_filename']}")
+    except Exception as exc:
+        print(f"[ANALYZE] Grad-CAM error: {exc}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Grad-CAM generation failed.")
 
@@ -212,28 +227,37 @@ async def analyze(
     explanation_msg = "Grad-CAM highlights image regions that influenced the model prediction."
 
     # ── 7. Upload Images to Cloudinary ──
+    print("[ANALYZE] Cloudinary upload started...")
     unique_id = uuid.uuid4().hex[:10]
     local_overlay_path = os.path.join(GENERATED_DIR, cam_files['overlay_filename'])
 
-    # Upload original retina image -> retinaai/retina-images/{unique_id}
-    cloudinary_original_url = cloudinary_service.upload_image(
-        file_source=file_bytes,
-        folder="retinaai/retina-images",
-        public_id=f"retina_{unique_id}",
-    )
+    cloudinary_original_url = None
+    cloudinary_gradcam_url = None
+    try:
+        # Upload original retina image -> retinaai/retina-images/{unique_id}
+        cloudinary_original_url = cloudinary_service.upload_image(
+            file_source=file_bytes,
+            folder="retinaai/retina-images",
+            public_id=f"retina_{unique_id}",
+        )
 
-    # Upload Grad-CAM overlay image -> retinaai/gradcam/{unique_id}
-    cloudinary_gradcam_url = cloudinary_service.upload_image(
-        file_source=local_overlay_path,
-        folder="retinaai/gradcam",
-        public_id=f"gradcam_{unique_id}",
-    )
+        # Upload Grad-CAM overlay image -> retinaai/gradcam/{unique_id}
+        cloudinary_gradcam_url = cloudinary_service.upload_image(
+            file_source=local_overlay_path,
+            folder="retinaai/gradcam",
+            public_id=f"gradcam_{unique_id}",
+        )
+    except Exception as exc:
+        print(f"[ANALYZE] Cloudinary upload warning: {exc}")
+
+    print(f"[ANALYZE] Cloudinary upload completed. Original URL: {cloudinary_original_url}, GradCAM URL: {cloudinary_gradcam_url}")
 
     # Final URLs (use Cloudinary secure_url if available, else local server path)
     final_image_url = cloudinary_original_url or overlay_local_url
     final_gradcam_url = cloudinary_gradcam_url or overlay_local_url
 
     # ── 8. Save to SQLite DB ──
+    print("[ANALYZE] Database save started...")
     db_record = database.save_screening(
         name=name,
         age=age,
@@ -247,8 +271,10 @@ async def analyze(
         overlay_url=final_gradcam_url,
         explanation=explanation_msg,
     )
+    print(f"[ANALYZE] Database save completed. Record ID: {db_record['id']}")
 
     # ── 9. Response ──
+    print(f"[ANALYZE] Response returned for Record ID: {db_record['id']}")
     return JSONResponse(content={
         "success": True,
         "record_id": db_record["id"],
