@@ -1,0 +1,21 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny access to all collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Patient records collection rules: allow authenticated read, create, and update
+    match /patients/{patientId} {
+      allow read, create, update: if request.auth != null;
+    }
+
+    // Screening records collection rules: allow authenticated read, create, and update
+    match /screenings/{screeningId} {
+      allow read, create, update: if request.auth != null;
+    }
+  }
+}

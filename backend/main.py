@@ -39,8 +39,8 @@ DEFAULT_CORS_ORIGINS = [
 env_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 CORS_ORIGINS = list(set(DEFAULT_CORS_ORIGINS + env_origins))
 
-# Regex pattern for Vercel preview / deployment URLs (e.g. https://ai-ratina-*.vercel.app)
-DEFAULT_CORS_ORIGIN_REGEX = r"https://ai-ratina-.*\.vercel\.app"
+# Regex pattern for Vercel preview / project deployment URLs (e.g. https://ai-ratina-*.vercel.app)
+DEFAULT_CORS_ORIGIN_REGEX = r"https://ai-ratina.*\.vercel\.app"
 CORS_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX", DEFAULT_CORS_ORIGIN_REGEX)
 
 # ──────────────────────────────────────────────
