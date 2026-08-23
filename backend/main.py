@@ -27,16 +27,21 @@ from utils.image_utils import load_image, preprocess_image, validate_file
 load_dotenv()
 
 DEFAULT_CORS_ORIGINS = [
-    "http://localhost:5174",
-    "http://127.0.0.1:5174",
+    "https://ai-ratina.vercel.app",
     "http://localhost:5173",
-    "http://127.0.0.1:5173",
     "http://localhost:3000",
+    "http://localhost:5174",
+    "http://127.0.0.1:5173",
     "http://127.0.0.1:3000",
+    "http://127.0.0.1:5174",
 ]
 
 env_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 CORS_ORIGINS = list(set(DEFAULT_CORS_ORIGINS + env_origins))
+
+# Regex pattern for Vercel preview / deployment URLs (e.g. https://ai-ratina-*.vercel.app)
+DEFAULT_CORS_ORIGIN_REGEX = r"https://ai-ratina-.*\.vercel\.app"
+CORS_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX", DEFAULT_CORS_ORIGIN_REGEX)
 
 # ──────────────────────────────────────────────
 # App
@@ -51,6 +56,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
+    allow_origin_regex=CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
