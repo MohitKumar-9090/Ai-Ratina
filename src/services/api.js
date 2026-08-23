@@ -1,0 +1,144 @@
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001'
+
+/**
+ * Check backend health status (GET /api/health).
+ * @returns {Promise<{status: string, model_loaded: boolean, device?: string, message?: string}>}
+ */
+export async function checkHealth() {
+  try {
+    const res = await fetch(`${API_URL}/api/health`)
+    if (!res.ok) {
+      return { status: 'offline', model_loaded: false, message: `Server returned status ${res.status}` }
+    }
+    return await res.json()
+  } catch (err) {
+    console.warn('[API] Health check failed:', err)
+    return { status: 'offline', model_loaded: false, message: 'AI server is offline.' }
+  }
+}
+
+/**
+ * Send a retinal image + optional patient data to backend for screening.
+ * @param {File} file – raw File object
+ * @param {object} [patientData] – { name, age, gender, patientId, contact }
+ * @returns {Promise<object>} – normalized result
+ */
+export async function analyzeImage(file, patientData = {}) {
+  // Requirement 7: Useful development logging
+  console.log('[API] API URL:', API_URL)
+  console.log('[API] Analyze endpoint:', `${API_URL}/api/analyze`)
+  console.log('[API] Selected file:', file?.name)
+
+  const formData = new FormData()
+  formData.append('file', file)
+
+  if (patientData.name) formData.append('name', patientData.name)
+  if (patientData.age) formData.append('age', patientData.age)
+  if (patientData.gender) formData.append('gender', patientData.gender)
+  if (patientData.patientId) formData.append('patient_id', patientData.patientId)
+  if (patientData.contact) formData.append('contact', patientData.contact)
+
+  let res
+  try {
+    res = await fetch(`${API_URL}/api/analyze`, {
+      method: 'POST',
+      body: formData,
+      // Do NOT set Content-Type header manually so the browser sets the multipart boundary automatically
+    })
+  } catch (err) {
+    // Requirement 6: Catch fetch network errors (connection refused, server offline, CORS drop)
+    console.error('[API] Fetch network error:', err)
+    throw new Error('Unable to connect to the AI server. Please make sure the backend is running at http://localhost:8001.')
+  }
+
+  console.log('[API] Response status:', res.status, res.statusText)
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}))
+    console.error('[API] Response JSON (Error):', errData)
+
+    if (res.status === 400) {
+      throw new Error(errData.detail || 'Invalid image or request.')
+    }
+    if (res.status === 503) {
+      throw new Error(errData.detail || 'AI model is not loaded on the server. Place retinopathy_efficientnet_b0.pth inside backend/models/ and restart the backend server.')
+    }
+    if (res.status === 500) {
+      throw new Error(errData.detail || 'AI analysis failed on the server.')
+    }
+    throw new Error(errData.detail || `Analysis request failed with HTTP ${res.status}`)
+  }
+
+  const data = await res.json()
+  console.log('[API] Response JSON (Success):', data)
+
+  return {
+    id: data.record_id,
+    patient: data.patient,
+    prediction: data.prediction.class_name,
+    severity: data.prediction.class_name,
+    overlayImage: `${API_URL}${data.explanation.overlay_url}`,
+    heatmapImage: `${API_URL}${data.explanation.heatmap_url}`,
+    explanation: data.explanation.message,
+    logits: data.logits,
+    probabilities: data.probabilities,
+    date: data.date || new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+    status: data.prediction.class_id === 0 ? 'Screened' : 'Review recommended',
+  }
+}
+
+/**
+ * Fetch dashboard overview statistics (total patients, total screenings, today's screenings).
+ */
+export async function fetchDashboardStats() {
+  try {
+    const res = await fetch(`${API_URL}/api/stats`)
+    if (!res.ok) throw new Error('Stats fetch failed')
+    return await res.json()
+  } catch (err) {
+    console.warn('[API] Failed to fetch stats:', err)
+    return { total_patients: 0, total_screenings: 0, today_screenings: 0 }
+  }
+}
+
+/**
+ * Fetch DR class distribution count.
+ */
+export async function fetchDistribution() {
+  try {
+    const res = await fetch(`${API_URL}/api/stats/distribution`)
+    if (!res.ok) throw new Error('Distribution fetch failed')
+    return await res.json()
+  } catch (err) {
+    console.warn('[API] Failed to fetch distribution:', err)
+    return { "No DR": 0, "Mild DR": 0, "Moderate DR": 0, "Severe DR": 0, "Proliferative DR": 0 }
+  }
+}
+
+/**
+ * Fetch N recent screening records.
+ */
+export async function fetchRecentScreenings(limit = 5) {
+  try {
+    const res = await fetch(`${API_URL}/api/screenings/recent?limit=${limit}`)
+    if (!res.ok) throw new Error('Recent screenings fetch failed')
+    return await res.json()
+  } catch (err) {
+    console.warn('[API] Failed to fetch recent screenings:', err)
+    return []
+  }
+}
+
+/**
+ * Fetch all screening history records.
+ */
+export async function fetchAllScreenings() {
+  try {
+    const res = await fetch(`${API_URL}/api/screenings`)
+    if (!res.ok) throw new Error('Screenings fetch failed')
+    return await res.json()
+  } catch (err) {
+    console.warn('[API] Failed to fetch all screenings:', err)
+    return []
+  }
+}

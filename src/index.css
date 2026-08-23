@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    background: #F6FAFB;
+    color: #102A43;
+  }
+  body {
+    @apply min-h-screen bg-surface-bg text-ink antialiased;
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  }
+  button, input, select, textarea {
+    font: inherit;
+  }
+}
+
+@layer components {
+  /* Page headers */
+  .page-title {
+    @apply text-2xl font-bold tracking-tight text-ink sm:text-3xl;
+  }
+  .page-copy {
+    @apply mt-1 text-sm leading-relaxed text-ink-muted;
+  }
+
+  /* Bento Cards */
+  .bento-card {
+    @apply rounded-2xl border border-surface-border bg-surface-card p-5 sm:p-6 shadow-bento transition-all duration-200 hover:shadow-bento-hover;
+  }
+  .bento-card-subtle {
+    @apply rounded-2xl border border-surface-border/60 bg-surface-soft p-5 sm:p-6 transition-all duration-200;
+  }
+
+  /* Buttons */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-primary-deep px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-primary duration-150 focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-surface-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-ink transition-all hover:bg-surface-soft duration-150 focus:outline-none focus:ring-4 focus:ring-primary/20;
+  }
+  .btn-teal {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-primary-teal px-4 py-2.5 text-sm font-semibold text-white transition-all hover:opacity-90 duration-150 focus:outline-none;
+  }
+
+  /* Input fields */
+  .input-field {
+    @apply w-full rounded-xl border border-surface-border bg-surface-card px-3.5 py-2.5 text-sm text-ink placeholder-ink-subtle/50 transition duration-150 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20;
+  }
+  .form-label {
+    @apply block text-xs font-semibold uppercase tracking-wider text-ink-muted mb-1.5;
+  }
+}
+
+/* Keyframe animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.25s ease-out forwards;
+}

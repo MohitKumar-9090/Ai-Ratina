@@ -1,0 +1,31 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Node modules & build
+node_modules
+dist
+dist-ssr
+*.local
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Backend Virtual Environment & Cache
+backend/venv/
+backend/__pycache__/
+backend/services/__pycache__/
+backend/utils/__pycache__/
+backend/generated/*
+!backend/generated/.gitkeep
+backend/models/*.pth
+backend/retina_ai.db
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
