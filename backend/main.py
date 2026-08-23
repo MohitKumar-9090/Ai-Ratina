@@ -27,6 +27,7 @@ load_dotenv()
 
 DEFAULT_CORS_ORIGINS = [
     "https://ai-ratina.vercel.app",
+    "https://ratinaai.netlify.app",
     "http://localhost:5173",
     "http://localhost:3000",
     "http://localhost:5174",
@@ -142,7 +143,6 @@ async def analyze(
     cam_files = None
 
     try:
-        # 1. Read and validate upload.
         read_start = time.perf_counter()
         try:
             file_bytes = await file.read()
@@ -159,7 +159,6 @@ async def analyze(
             raise HTTPException(status_code=400, detail=error)
         print(f"[ANALYZE] Image received ({len(file_bytes)} bytes). read/validate: {time.perf_counter() - read_start:.2f}s")
 
-        # 2. Load image and create exactly one inference tensor.
         prep_start = time.perf_counter()
         try:
             pil_image = load_image(file_bytes)
@@ -169,7 +168,6 @@ async def analyze(
         input_tensor = preprocess_image(pil_image)
         print(f"[ANALYZE] Image preprocessing: {time.perf_counter() - prep_start:.2f}s; size={pil_image.size}")
 
-        # 3. Prediction is the critical operation and must succeed independently.
         inference_start = time.perf_counter()
         try:
             prediction = model_service.predict(
@@ -188,12 +186,10 @@ async def analyze(
             f"{prediction['class_name']} ({prediction['confidence']}%)"
         )
 
-        # Release the inference tensor before optional Grad-CAM work.
         del input_tensor
         input_tensor = None
         gc.collect()
 
-        # 4. Optional Grad-CAM. Never turn a successful prediction into a failed request.
         heatmap_local_url = None
         overlay_local_url = None
         explanation_msg = "Prediction completed."
@@ -220,7 +216,6 @@ async def analyze(
             gradcam_tensor = None
             gc.collect()
 
-        # 5. Optional Cloudinary upload. A Cloudinary failure must not erase prediction.
         unique_id = uuid.uuid4().hex[:10]
         local_overlay_path = os.path.join(GENERATED_DIR, cam_files["overlay_filename"]) if cam_files else None
         cloudinary_original_url = None
@@ -245,7 +240,6 @@ async def analyze(
         final_image_url = cloudinary_original_url or ""
         final_gradcam_url = cloudinary_gradcam_url or overlay_local_url or ""
 
-        # 6. Optional DB persistence. Prediction remains valid if persistence fails.
         db_record = None
         db_start = time.perf_counter()
         try:
@@ -267,7 +261,6 @@ async def analyze(
             print(f"[ANALYZE] Database warning (prediction preserved): {exc}")
             traceback.print_exc()
 
-        # 7. Return the prediction even if optional explanation/storage failed.
         record_id = db_record["id"] if db_record else None
         patient = db_record["patient"] if db_record else {
             "name": name,
@@ -303,7 +296,6 @@ async def analyze(
         })
 
     finally:
-        # Explicitly release large request-local objects before the next request.
         file_bytes = None
         pil_image = None
         input_tensor = None
