@@ -2,7 +2,8 @@ import { Activity, ArrowRight, Eye, FileText, Layers, Plus, ScanLine, Users } fr
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchDashboardStats, fetchDistribution, fetchRecentScreenings } from '../services/api'
-import { isFirebaseConfigured, getFirebaseScreenings } from '../firebase/firebase'
+import { isFirebaseConfigured } from '../firebase/firebase'
+import { getFirestoreScreenings } from '../services/firestoreService'
 
 export default function Dashboard() {
   const [stats, setStats] = useState({ total_patients: 0, total_screenings: 0, today_screenings: 0 })
@@ -15,7 +16,7 @@ export default function Dashboard() {
       try {
         let recentData = []
         if (isFirebaseConfigured()) {
-          const fbData = await getFirebaseScreenings()
+          const fbData = await getFirestoreScreenings()
           recentData = fbData.slice(0, 5)
         }
 

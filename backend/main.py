@@ -7,6 +7,7 @@ Run with:
 
 import os
 import traceback
+import uuid
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -16,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 import database
 from services import model_service
+from services import cloudinary_service
 from services.gradcam_service import generate_gradcam_images
 from utils.image_utils import load_image, preprocess_image, validate_file
 
@@ -91,6 +93,7 @@ async def health():
         "status": "ok",
         "model_loaded": model_service.is_model_loaded(),
         "device": device,
+        "cloudinary_configured": cloudinary_service.is_cloudinary_configured(),
     }
 
 
@@ -138,6 +141,7 @@ async def analyze(
     - DR prediction (class + confidence)
     - Raw logits and Softmax probabilities for all 5 classes
     - Grad-CAM heatmap & overlay URLs
+    - Cloudinary hosted image URLs (image_url, gradcam_url)
     - Saves record to SQLite database
     """
 
@@ -183,7 +187,7 @@ async def analyze(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Prediction failed. Please try again.")
 
-    # ── 6. Grad-CAM ──
+    # ── 6. Grad-CAM Generation ──
     try:
         model = model_service.get_model()
         gradcam_tensor = preprocess_image(pil_image)
@@ -197,11 +201,33 @@ async def analyze(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Grad-CAM generation failed.")
 
-    heatmap_url = f"/generated/{cam_files['heatmap_filename']}"
-    overlay_url = f"/generated/{cam_files['overlay_filename']}"
+    heatmap_local_url = f"/generated/{cam_files['heatmap_filename']}"
+    overlay_local_url = f"/generated/{cam_files['overlay_filename']}"
     explanation_msg = "Grad-CAM highlights image regions that influenced the model prediction."
 
-    # ── 7. Save to SQLite DB ──
+    # ── 7. Upload Images to Cloudinary ──
+    unique_id = uuid.uuid4().hex[:10]
+    local_overlay_path = os.path.join(GENERATED_DIR, cam_files['overlay_filename'])
+
+    # Upload original retina image -> retinaai/retina-images/{unique_id}
+    cloudinary_original_url = cloudinary_service.upload_image(
+        file_source=file_bytes,
+        folder="retinaai/retina-images",
+        public_id=f"retina_{unique_id}",
+    )
+
+    # Upload Grad-CAM overlay image -> retinaai/gradcam/{unique_id}
+    cloudinary_gradcam_url = cloudinary_service.upload_image(
+        file_source=local_overlay_path,
+        folder="retinaai/gradcam",
+        public_id=f"gradcam_{unique_id}",
+    )
+
+    # Final URLs (use Cloudinary secure_url if available, else local server path)
+    final_image_url = cloudinary_original_url or overlay_local_url
+    final_gradcam_url = cloudinary_gradcam_url or overlay_local_url
+
+    # ── 8. Save to SQLite DB ──
     db_record = database.save_screening(
         name=name,
         age=age,
@@ -211,12 +237,12 @@ async def analyze(
         prediction=prediction["class_name"],
         class_id=prediction["class_id"],
         confidence=prediction["confidence"],
-        heatmap_url=heatmap_url,
-        overlay_url=overlay_url,
+        heatmap_url=heatmap_local_url,
+        overlay_url=final_gradcam_url,
         explanation=explanation_msg,
     )
 
-    # ── 8. Response ──
+    # ── 9. Response ──
     return JSONResponse(content={
         "success": True,
         "record_id": db_record["id"],
@@ -230,9 +256,11 @@ async def analyze(
         "probabilities": prediction["probabilities"],
         "explanation": {
             "message": explanation_msg,
-            "heatmap_url": heatmap_url,
-            "overlay_url": overlay_url,
+            "heatmap_url": heatmap_local_url,
+            "overlay_url": overlay_local_url,
         },
+        "image_url": final_image_url,
+        "gradcam_url": final_gradcam_url,
         "date": db_record["date"],
     })
 

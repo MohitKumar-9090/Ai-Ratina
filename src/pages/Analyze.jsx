@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ImageUploader from '../components/ImageUploader'
 import { analyzeImage, checkHealth } from '../services/api'
-import { isFirebaseConfigured, saveScreeningToFirebase } from '../firebase/firebase'
+import { isFirebaseConfigured } from '../firebase/firebase'
+import { saveScreeningToFirestore } from '../services/firestoreService'
 
 export default function Analyze({ image, setImage, setLatestResult }) {
   const [loading, setLoading] = useState(false)
@@ -55,7 +56,7 @@ export default function Analyze({ image, setImage, setLatestResult }) {
 
     let result = null
 
-    // 1. Run real EfficientNet-B0 prediction via FastAPI
+    // ── Step 1: Run EfficientNet-B0 + Grad-CAM + Cloudinary via FastAPI ──
     try {
       result = await analyzeImage(image.file, {
         name: patientData.name,
@@ -68,15 +69,15 @@ export default function Analyze({ image, setImage, setLatestResult }) {
     } catch (err) {
       console.error('[Analyze] AI Analysis Error:', err)
       setLoading(false)
-      setError(err.message || 'Unable to analyze this image. Please try again.')
+      setError('Unable to analyze this image. Please try again.')
       return
     }
 
-    // 2. Save to Firebase (Firestore + Storage) if configured
+    // ── Step 2: Save Metadata & Cloudinary URLs to Firestore ──
     if (isFirebaseConfigured()) {
-      setStatusText('Saving screening to Firebase...')
+      setStatusText('Saving screening...')
       try {
-        await saveScreeningToFirebase({
+        await saveScreeningToFirestore({
           patientData: {
             fullName: patientData.name,
             age: patientData.age,
@@ -86,12 +87,13 @@ export default function Analyze({ image, setImage, setLatestResult }) {
             notes: patientData.notes,
           },
           result,
-          originalFile: image.file,
+          imageUrl: result.image_url,
+          gradcamUrl: result.gradcam_url,
         })
-      } catch (fbErr) {
-        console.error('[Analyze] Firebase Save Warning:', fbErr)
-        // Per requirement 10: AI result succeeds, notify user about Firebase save failure without marking AI analysis failed
-        setError('Analysis completed, but the record could not be saved to Firebase.')
+      } catch (fsErr) {
+        console.error('[Analyze] Firestore Save Warning:', fsErr)
+        // Requirement 13: Never show "Unable to analyze" when only Firestore fails
+        setError('Analysis completed, but patient record could not be saved.')
       }
     }
 

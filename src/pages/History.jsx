@@ -2,7 +2,8 @@ import { ArrowRight, History as HistoryIcon, Search, User } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchAllScreenings } from '../services/api'
-import { isFirebaseConfigured, getFirebaseScreenings } from '../firebase/firebase'
+import { isFirebaseConfigured } from '../firebase/firebase'
+import { getFirestoreScreenings } from '../services/firestoreService'
 
 export default function History() {
   const [records, setRecords] = useState([])
@@ -15,7 +16,7 @@ export default function History() {
       try {
         let data = []
         if (isFirebaseConfigured()) {
-          data = await getFirebaseScreenings()
+          data = await getFirestoreScreenings()
         }
         if (!data || data.length === 0) {
           data = await fetchAllScreenings()
