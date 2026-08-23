@@ -27,9 +27,9 @@ export default function Analyze({ image, setImage, setLatestResult }) {
       const health = await checkHealth()
       setServerHealth(health)
       if (health.status === 'offline') {
-        setError('AI server is offline. Please start the backend on port 8001.')
+        setError(health.message || 'AI server is offline. Please check backend connection.')
       } else if (!health.model_loaded) {
-        setError('AI model is not loaded. Place retinopathy_efficientnet_b0.pth inside backend/models/.')
+        setError('AI model is not loaded on the server.')
       }
     }
     verifyBackend()
@@ -69,7 +69,7 @@ export default function Analyze({ image, setImage, setLatestResult }) {
     } catch (err) {
       console.error('[Analyze] AI Analysis Error:', err)
       setLoading(false)
-      setError('Unable to analyze this image. Please try again.')
+      setError(err.message || 'Unable to analyze this image. Please try again.')
       return
     }
 
@@ -116,7 +116,7 @@ export default function Analyze({ image, setImage, setLatestResult }) {
           <ServerOff className="h-5 w-5 shrink-0" />
           <div>
             <strong className="font-bold block text-sm">AI Server is Offline</strong>
-            <span>Unable to reach backend at http://localhost:8001. Please run: <code className="font-mono bg-white/50 px-1 py-0.5 rounded">uvicorn main:app --port 8001</code> inside the backend folder.</span>
+            <span>Unable to connect to the backend server. Please verify backend status on Render or local server.</span>
           </div>
         </div>
       )}

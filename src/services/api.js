@@ -1,4 +1,13 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001'
+const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8001').replace(/\/$/, '')
+
+/**
+ * Format dynamic image URLs safely (handles absolute Cloudinary URLs vs relative local URLs).
+ */
+const resolveImageUrl = (url) => {
+  if (!url) return ''
+  if (url.startsWith('http://') || url.startsWith('https://')) return url
+  return `${API_URL}${url.startsWith('/') ? '' : '/'}${url}`
+}
 
 /**
  * Check backend health status (GET /api/health).
@@ -24,8 +33,7 @@ export async function checkHealth() {
  * @returns {Promise<object>} – normalized result
  */
 export async function analyzeImage(file, patientData = {}) {
-  // Requirement 7: Useful development logging
-  console.log('[API] API URL:', API_URL)
+  console.log('[API] API Base URL:', API_URL)
   console.log('[API] Analyze endpoint:', `${API_URL}/api/analyze`)
   console.log('[API] Selected file:', file?.name)
 
@@ -46,9 +54,8 @@ export async function analyzeImage(file, patientData = {}) {
       // Do NOT set Content-Type header manually so the browser sets the multipart boundary automatically
     })
   } catch (err) {
-    // Requirement 6: Catch fetch network errors (connection refused, server offline, CORS drop)
     console.error('[API] Fetch network error:', err)
-    throw new Error('Unable to connect to the AI server. Please make sure the backend is running at http://localhost:8001.')
+    throw new Error(`Unable to connect to the AI server. Please verify backend status at ${API_URL}.`)
   }
 
   console.log('[API] Response status:', res.status, res.statusText)
@@ -61,7 +68,7 @@ export async function analyzeImage(file, patientData = {}) {
       throw new Error(errData.detail || 'Invalid image or request.')
     }
     if (res.status === 503) {
-      throw new Error(errData.detail || 'AI model is not loaded on the server. Place retinopathy_efficientnet_b0.pth inside backend/models/ and restart the backend server.')
+      throw new Error(errData.detail || 'AI model is not loaded on the server.')
     }
     if (res.status === 500) {
       throw new Error(errData.detail || 'AI analysis failed on the server.')
@@ -77,9 +84,10 @@ export async function analyzeImage(file, patientData = {}) {
     patient: data.patient,
     prediction: data.prediction.class_name,
     severity: data.prediction.class_name,
-    overlayImage: `${API_URL}${data.explanation.overlay_url}`,
-    heatmapImage: `${API_URL}${data.explanation.heatmap_url}`,
-    explanation: data.explanation.message,
+    originalImage: resolveImageUrl(data.image_url),
+    overlayImage: resolveImageUrl(data.gradcam_url || data.explanation?.overlay_url),
+    heatmapImage: resolveImageUrl(data.explanation?.heatmap_url || data.gradcam_url),
+    explanation: data.explanation?.message || 'Grad-CAM highlights image regions that influenced the model prediction.',
     logits: data.logits,
     probabilities: data.probabilities,
     date: data.date || new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),

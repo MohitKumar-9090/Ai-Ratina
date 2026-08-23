@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://ai-ratina.onrender.com/api/:path*"
+    },
+    {
+      "source": "/generated/:path*",
+      "destination": "https://ai-ratina.onrender.com/generated/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
