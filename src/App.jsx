@@ -31,7 +31,15 @@ export default function App() {
               />
             }
           />
-          <Route path="/result" element={<Result latestResult={latestResult} />} />
+          <Route
+            path="/result"
+            element={
+              <Result
+                latestResult={latestResult}
+                setLatestResult={setLatestResult}
+              />
+            }
+          />
           <Route path="/history" element={<History />} />
           <Route path="/reports" element={<Reports latestResult={latestResult} />} />
           <Route path="/about" element={<About />} />
