@@ -60,9 +60,9 @@ GENERATED_DIR = os.path.join(os.path.dirname(__file__), "generated")
 os.makedirs(GENERATED_DIR, exist_ok=True)
 app.mount("/generated", StaticFiles(directory=GENERATED_DIR), name="generated")
 
-# Grad-CAM is expensive on small Render instances. Keep it enabled locally,
-# but disable it by default in production so prediction cannot be blocked by it.
-ENABLE_GRADCAM = os.getenv("ENABLE_GRADCAM", "false").strip().lower() == "true"
+# Grad-CAM is enabled by default so the explainability result is available.
+# Set ENABLE_GRADCAM=false in the environment to disable it if required.
+ENABLE_GRADCAM = os.getenv("ENABLE_GRADCAM", "true").strip().lower() == "true"
 
 
 @app.on_event("startup")
@@ -90,6 +90,7 @@ async def health():
         "model_loaded": model_service.is_model_loaded(),
         "device": device,
         "cloudinary_configured": cloudinary_service.is_cloudinary_configured(),
+        "gradcam_enabled": ENABLE_GRADCAM,
     }
 
 
