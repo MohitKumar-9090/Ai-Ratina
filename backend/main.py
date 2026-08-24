@@ -60,6 +60,10 @@ GENERATED_DIR = os.path.join(os.path.dirname(__file__), "generated")
 os.makedirs(GENERATED_DIR, exist_ok=True)
 app.mount("/generated", StaticFiles(directory=GENERATED_DIR), name="generated")
 
+# Grad-CAM is expensive on small Render instances. Keep it enabled locally,
+# but disable it by default in production so prediction cannot be blocked by it.
+ENABLE_GRADCAM = os.getenv("ENABLE_GRADCAM", "false").strip().lower() == "true"
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -193,28 +197,32 @@ async def analyze(
         heatmap_local_url = None
         overlay_local_url = None
         explanation_msg = "Prediction completed."
-        gradcam_start = time.perf_counter()
-        try:
-            model = model_service.get_model()
-            visualization_image = _make_visualization_image(pil_image)
-            gradcam_tensor = preprocess_image(visualization_image)
-            cam_files = generate_gradcam_images(
-                model=model,
-                input_tensor=gradcam_tensor,
-                original_pil_image=visualization_image,
-                class_idx=prediction["class_id"],
-            )
-            heatmap_local_url = f"/generated/{cam_files['heatmap_filename']}"
-            overlay_local_url = f"/generated/{cam_files['overlay_filename']}"
-            explanation_msg = "Grad-CAM highlights image regions that influenced the model prediction."
-            print(f"[ANALYZE] Grad-CAM: {time.perf_counter() - gradcam_start:.2f}s")
-        except Exception as exc:
-            print(f"[ANALYZE] Grad-CAM warning (prediction preserved): {exc}")
-            traceback.print_exc()
-            explanation_msg = "Prediction completed; visual explanation was temporarily unavailable."
-        finally:
-            gradcam_tensor = None
-            gc.collect()
+
+        if ENABLE_GRADCAM:
+            gradcam_start = time.perf_counter()
+            try:
+                model = model_service.get_model()
+                visualization_image = _make_visualization_image(pil_image)
+                gradcam_tensor = preprocess_image(visualization_image)
+                cam_files = generate_gradcam_images(
+                    model=model,
+                    input_tensor=gradcam_tensor,
+                    original_pil_image=visualization_image,
+                    class_idx=prediction["class_id"],
+                )
+                heatmap_local_url = f"/generated/{cam_files['heatmap_filename']}"
+                overlay_local_url = f"/generated/{cam_files['overlay_filename']}"
+                explanation_msg = "Grad-CAM highlights image regions that influenced the model prediction."
+                print(f"[ANALYZE] Grad-CAM: {time.perf_counter() - gradcam_start:.2f}s")
+            except Exception as exc:
+                print(f"[ANALYZE] Grad-CAM warning (prediction preserved): {exc}")
+                traceback.print_exc()
+                explanation_msg = "Prediction completed; visual explanation was temporarily unavailable."
+            finally:
+                gradcam_tensor = None
+                gc.collect()
+        else:
+            print("[ANALYZE] Grad-CAM skipped (ENABLE_GRADCAM=false)")
 
         unique_id = uuid.uuid4().hex[:10]
         local_overlay_path = os.path.join(GENERATED_DIR, cam_files["overlay_filename"]) if cam_files else None
@@ -236,6 +244,7 @@ async def analyze(
             print(f"[ANALYZE] Cloudinary: {time.perf_counter() - cloud_start:.2f}s")
         except Exception as exc:
             print(f"[ANALYZE] Cloudinary warning: {exc}")
+            traceback.print_exc()
 
         final_image_url = cloudinary_original_url or ""
         final_gradcam_url = cloudinary_gradcam_url or overlay_local_url or ""
