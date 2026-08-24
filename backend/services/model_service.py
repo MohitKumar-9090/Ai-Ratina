@@ -7,10 +7,6 @@ import torch
 import torch.nn.functional as F
 from torchvision import models
 
-
-# ──────────────────────────────────────────────
-# Constants
-# ──────────────────────────────────────────────
 NUM_CLASSES = 5
 CLASS_NAMES = {
     0: "No DR",
@@ -22,10 +18,6 @@ CLASS_NAMES = {
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "retinopathy_efficientnet_b0.pth")
 
-
-# ──────────────────────────────────────────────
-# Module-level state
-# ──────────────────────────────────────────────
 _model = None
 _device = None
 
@@ -36,24 +28,16 @@ def get_device() -> torch.device:
 
 
 def load_model() -> None:
-    """
-    Build EfficientNet-B0, replace the classifier head for 5 classes,
-    load the trained weights, and set the model to eval mode.
-    """
+    """Build EfficientNet-B0, load trained weights, and prepare it for inference/Grad-CAM."""
     global _model, _device
 
     _device = get_device()
     print(f"Using device: {_device}")
 
-    # Build architecture — must exactly match the architecture used when
-    # the .pth file was saved during training in Google Colab.
     _model = models.efficientnet_b0(weights=None)
-
-    # Replace the final classifier layer to output 5 classes
     in_features = _model.classifier[1].in_features
     _model.classifier[1] = torch.nn.Linear(in_features, NUM_CLASSES)
 
-    # Load trained weights
     resolved_path = os.path.abspath(MODEL_PATH)
     if not os.path.isfile(resolved_path):
         raise FileNotFoundError(
@@ -62,34 +46,35 @@ def load_model() -> None:
         )
 
     state_dict = torch.load(resolved_path, map_location=_device, weights_only=True)
-
-    # If state_dict is wrapped inside a "state_dict" key, unwrap it
     if isinstance(state_dict, dict) and "state_dict" in state_dict:
         state_dict = state_dict["state_dict"]
 
     _model.load_state_dict(state_dict)
     _model.to(_device)
-    _model.eval()
 
+    # The model weights never need gradients. Freezing parameters is important
+    # for Grad-CAM on small CPU instances: autograd then keeps gradients only
+    # for the input/target activations instead of the entire EfficientNet.
+    for parameter in _model.parameters():
+        parameter.requires_grad_(False)
+
+    _model.eval()
     print(f"Model loaded successfully from {resolved_path}")
 
 
 def get_model():
-    """Return the loaded model.  Raises RuntimeError if not loaded."""
     if _model is None:
         raise RuntimeError("Model has not been loaded. Call load_model() first.")
     return _model
 
 
 def get_model_device() -> torch.device:
-    """Return the device the model is on."""
     if _device is None:
         raise RuntimeError("Model has not been loaded.")
     return _device
 
 
 def is_model_loaded() -> bool:
-    """Check whether the model has been loaded."""
     return _model is not None
 
 
@@ -99,21 +84,9 @@ def predict(
     image_size: tuple = (0, 0),
     image_mode: str = "N/A",
 ) -> dict:
-    """
-    Run inference on a preprocessed input tensor (1, 3, 224, 224).
-
-    Returns
-    -------
-    dict with keys:
-        class_id        int   — predicted class index
-        class_name      str   — human-readable class name
-        confidence      float — confidence as a percentage (e.g. 72.46)
-        logits          list  — raw model output logits for 5 classes
-        probabilities   dict  — mapping class_name -> percentage float
-    """
+    """Run inference on a preprocessed input tensor (1, 3, 224, 224)."""
     model = get_model()
     device = get_model_device()
-
     input_tensor = input_tensor.to(device)
 
     with torch.no_grad():
@@ -130,7 +103,6 @@ def predict(
         for i in range(NUM_CLASSES)
     }
 
-    # STEP 1: Complete debug output in backend terminal
     print("\n" + "=" * 55)
     print(f"Filename: {filename}")
     print(f"Original image size: {image_size[0]}x{image_size[1]}")
