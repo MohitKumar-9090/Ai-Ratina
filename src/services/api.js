@@ -1,11 +1,12 @@
 const configuredApiUrl = (import.meta.env.VITE_API_URL || '').trim()
 
 // Local development talks directly to the local FastAPI server.
-// Production uses same-origin /api routes when VITE_API_URL is not set;
-// Vercel proxies those routes to the Render backend via vercel.json.
+// Production deliberately uses same-origin /api routes. Vercel proxies
+// those routes to the Render backend via vercel.json, which avoids browser
+// CORS entirely and keeps the backend URL out of the client bundle.
 const API_URL = (
   import.meta.env.PROD
-    ? configuredApiUrl
+    ? ''
     : (configuredApiUrl || 'http://localhost:8001')
 ).replace(/\/$/, '')
 
