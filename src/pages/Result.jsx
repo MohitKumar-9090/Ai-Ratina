@@ -1,11 +1,70 @@
-import { Activity, ArrowLeft, CheckCircle2, AlertTriangle, FileText, User } from 'lucide-react'
+import { Activity, ArrowLeft, CheckCircle2, AlertTriangle, FileText, User, LoaderCircle } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import Disclaimer from '../components/Disclaimer'
 import GradCAMViewer from '../components/GradCAMViewer'
+import { fetchAllScreenings } from '../services/api'
 
-export default function Result({ latestResult }) {
+export default function Result({ latestResult, setLatestResult }) {
   const location = useLocation()
-  const result = location.state?.result || latestResult
+  const locationResult = location.state?.result
+  const result = latestResult || locationResult
+  const [camPending, setCamPending] = useState(Boolean(result?.id && !result?.overlayImage))
+
+  useEffect(() => {
+    if (!result?.id || result?.overlayImage) {
+      setCamPending(false)
+      return undefined
+    }
+
+    let cancelled = false
+    let timer = null
+    const startedAt = Date.now()
+    const MAX_WAIT = 60000
+
+    const poll = async () => {
+      try {
+        const records = await fetchAllScreenings()
+        if (cancelled) return
+
+        const record = records.find((item) => String(item.id) === String(result.id))
+        const overlay = record?.overlay_url || ''
+        const heatmap = record?.heatmap_url || ''
+
+        if (overlay || heatmap) {
+          setLatestResult?.((previous) => ({
+            ...(previous || result),
+            overlayImage: overlay || previous?.overlayImage || '',
+            heatmapImage: heatmap || previous?.heatmapImage || '',
+            gradcam_url: overlay || previous?.gradcam_url || '',
+            explanation: record?.explanation || previous?.explanation,
+          }))
+          setCamPending(false)
+          return
+        }
+
+        if (Date.now() - startedAt < MAX_WAIT) {
+          timer = window.setTimeout(poll, 2500)
+        } else {
+          setCamPending(false)
+        }
+      } catch (error) {
+        console.warn('[Result] Grad-CAM polling warning:', error)
+        if (!cancelled && Date.now() - startedAt < MAX_WAIT) {
+          timer = window.setTimeout(poll, 3000)
+        } else if (!cancelled) {
+          setCamPending(false)
+        }
+      }
+    }
+
+    poll()
+
+    return () => {
+      cancelled = true
+      if (timer) window.clearTimeout(timer)
+    }
+  }, [result?.id, result?.overlayImage, setLatestResult])
 
   if (!result) {
     return (
@@ -24,7 +83,6 @@ export default function Result({ latestResult }) {
 
   return (
     <div className="space-y-6">
-      {/* Top action bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="page-title">Screening Result</h1>
@@ -40,10 +98,7 @@ export default function Result({ latestResult }) {
         </div>
       </div>
 
-      {/* Result Bento Grid */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-
-        {/* 1. Screening Result Card (Large DR Stage) */}
         <div className="bento-card lg:col-span-2 flex flex-col justify-between space-y-6 relative overflow-hidden">
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -60,16 +115,10 @@ export default function Result({ latestResult }) {
 
             <div
               className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${
-                isNormal
-                  ? 'bg-emerald-50 text-status-success'
-                  : 'bg-amber-50 text-status-warning'
+                isNormal ? 'bg-emerald-50 text-status-success' : 'bg-amber-50 text-status-warning'
               }`}
             >
-              {isNormal ? (
-                <CheckCircle2 className="h-6 w-6" />
-              ) : (
-                <AlertTriangle className="h-6 w-6" />
-              )}
+              {isNormal ? <CheckCircle2 className="h-6 w-6" /> : <AlertTriangle className="h-6 w-6" />}
             </div>
           </div>
 
@@ -84,13 +133,10 @@ export default function Result({ latestResult }) {
               Status: {result.status || (isNormal ? 'Screened' : 'Review recommended')}
             </span>
 
-            <span className="text-xs text-ink-subtle">
-              Screening Date: {result.date}
-            </span>
+            <span className="text-xs text-ink-subtle">Screening Date: {result.date}</span>
           </div>
         </div>
 
-        {/* 2. Patient Information Card */}
         <div className="bento-card flex flex-col justify-between space-y-4">
           <div>
             <div className="flex items-center gap-2 border-b border-surface-border/60 pb-3">
@@ -100,42 +146,29 @@ export default function Result({ latestResult }) {
 
             <div className="mt-4 space-y-3">
               <div>
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-subtle block">
-                  Patient Name
-                </span>
-                <p className="text-sm font-bold text-ink">
-                  {result.patient?.name || 'Anonymous Patient'}
-                </p>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-subtle block">Patient Name</span>
+                <p className="text-sm font-bold text-ink">{result.patient?.name || 'Anonymous Patient'}</p>
               </div>
 
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div>
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-subtle block">
-                    Age
-                  </span>
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-subtle block">Age</span>
                   <p className="font-semibold text-ink">{result.patient?.age || 'N/A'}</p>
                 </div>
                 <div>
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-subtle block">
-                    Gender
-                  </span>
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-subtle block">Gender</span>
                   <p className="font-semibold text-ink">{result.patient?.gender || 'N/A'}</p>
                 </div>
               </div>
 
               <div>
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-subtle block">
-                  Patient Code
-                </span>
-                <p className="text-xs font-mono font-medium text-ink-muted">
-                  {result.patient?.patient_id || 'P-001'}
-                </p>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-subtle block">Patient Code</span>
+                <p className="text-xs font-mono font-medium text-ink-muted">{result.patient?.patient_id || 'P-001'}</p>
               </div>
             </div>
           </div>
         </div>
 
-        {/* 3. Grad-CAM Explainable AI Bento Card (Spans 3 columns) */}
         <div className="bento-card lg:col-span-3 space-y-5">
           <div className="flex items-center justify-between border-b border-surface-border/60 pb-4">
             <div>
@@ -144,6 +177,11 @@ export default function Result({ latestResult }) {
                 Highlighted regions indicate areas that influenced the model's prediction.
               </p>
             </div>
+            {camPending && (
+              <span className="inline-flex items-center gap-2 rounded-full bg-surface-soft px-3 py-1.5 text-[11px] font-semibold text-ink-muted">
+                <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> Generating Grad-CAM…
+              </span>
+            )}
           </div>
 
           <GradCAMViewer
@@ -157,11 +195,9 @@ export default function Result({ latestResult }) {
           </p>
         </div>
 
-        {/* 4. Disclaimer Card (Spans 3 columns) */}
         <div className="lg:col-span-3">
           <Disclaimer />
         </div>
-
       </div>
     </div>
   )
