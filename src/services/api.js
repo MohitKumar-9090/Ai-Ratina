@@ -1,4 +1,13 @@
-const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8001').replace(/\/$/, '')
+const configuredApiUrl = (import.meta.env.VITE_API_URL || '').trim()
+
+// Local development talks directly to the local FastAPI server.
+// Production uses same-origin /api routes when VITE_API_URL is not set;
+// Vercel proxies those routes to the Render backend via vercel.json.
+const API_URL = (
+  import.meta.env.PROD
+    ? configuredApiUrl
+    : (configuredApiUrl || 'http://localhost:8001')
+).replace(/\/$/, '')
 
 /**
  * Format dynamic image URLs safely (handles absolute Cloudinary URLs vs relative local URLs).
@@ -34,7 +43,7 @@ export async function checkHealth() {
  */
 export async function analyzeImage(file, patientData = {}) {
   const analyzeUrl = `${API_URL}/api/analyze`
-  console.log('[API] Analyze request URL:', analyzeUrl)
+  console.log('[API] Analyze request URL:', analyzeUrl || '/api/analyze (Vercel proxy)')
   console.log('[API] Selected file:', file?.name)
 
   const formData = new FormData()
