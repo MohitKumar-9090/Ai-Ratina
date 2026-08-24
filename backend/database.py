@@ -131,6 +131,40 @@ def save_screening(
     }
 
 
+def update_screening_assets(
+    screening_id: int,
+    heatmap_url: str | None = None,
+    overlay_url: str | None = None,
+    explanation: str | None = None,
+) -> bool:
+    """Update visualization assets after the prediction response has returned."""
+    fields = []
+    values = []
+
+    if heatmap_url is not None:
+        fields.append("heatmap_url = ?")
+        values.append(heatmap_url)
+    if overlay_url is not None:
+        fields.append("overlay_url = ?")
+        values.append(overlay_url)
+    if explanation is not None:
+        fields.append("explanation = ?")
+        values.append(explanation)
+
+    if not fields:
+        return False
+
+    values.append(screening_id)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"UPDATE screenings SET {', '.join(fields)} WHERE id = ?",
+            values,
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
 def get_all_screenings() -> list:
     """Get all screenings with patient details."""
     with get_connection() as conn:
