@@ -12,7 +12,7 @@ import traceback
 import uuid
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -60,8 +60,8 @@ GENERATED_DIR = os.path.join(os.path.dirname(__file__), "generated")
 os.makedirs(GENERATED_DIR, exist_ok=True)
 app.mount("/generated", StaticFiles(directory=GENERATED_DIR), name="generated")
 
-# Grad-CAM is enabled by default so the explainability result is available.
-# Set ENABLE_GRADCAM=false in the environment to disable it if required.
+# Grad-CAM and Cloudinary uploads are intentionally processed in the background.
+# This keeps /api/analyze fast and prevents Render/proxy timeout errors.
 ENABLE_GRADCAM = os.getenv("ENABLE_GRADCAM", "true").strip().lower() == "true"
 
 
@@ -91,6 +91,7 @@ async def health():
         "device": device,
         "cloudinary_configured": cloudinary_service.is_cloudinary_configured(),
         "gradcam_enabled": ENABLE_GRADCAM,
+        "assets_background": True,
     }
 
 
@@ -125,8 +126,87 @@ def _make_visualization_image(pil_image):
     return visual
 
 
+def _process_background_assets(screening_id, file_bytes, pil_image, prediction):
+    """Generate Grad-CAM and upload assets after the API response is sent."""
+    heatmap_local_url = None
+    overlay_local_url = None
+    cloudinary_original_url = None
+    cloudinary_gradcam_url = None
+    cam_files = None
+
+    try:
+        unique_id = uuid.uuid4().hex[:10]
+
+        try:
+            cloudinary_original_url = cloudinary_service.upload_image(
+                file_source=file_bytes,
+                folder="retinaai/retina-images",
+                public_id=f"retina_{unique_id}",
+            )
+        except Exception as exc:
+            print(f"[BACKGROUND] Original image upload warning: {exc}")
+            traceback.print_exc()
+
+        explanation_msg = "Prediction completed."
+
+        if ENABLE_GRADCAM:
+            try:
+                gradcam_start = time.perf_counter()
+                model = model_service.get_model()
+                visualization_image = _make_visualization_image(pil_image)
+                gradcam_tensor = preprocess_image(visualization_image)
+
+                cam_files = generate_gradcam_images(
+                    model=model,
+                    input_tensor=gradcam_tensor,
+                    original_pil_image=visualization_image,
+                    class_idx=prediction["class_id"],
+                )
+
+                heatmap_local_url = f"/generated/{cam_files['heatmap_filename']}"
+                overlay_local_url = f"/generated/{cam_files['overlay_filename']}"
+                explanation_msg = "Grad-CAM highlights image regions that influenced the model prediction."
+                print(f"[BACKGROUND] Grad-CAM completed in {time.perf_counter() - gradcam_start:.2f}s")
+
+                local_overlay_path = os.path.join(GENERATED_DIR, cam_files["overlay_filename"])
+                if os.path.isfile(local_overlay_path):
+                    try:
+                        cloudinary_gradcam_url = cloudinary_service.upload_image(
+                            file_source=local_overlay_path,
+                            folder="retinaai/gradcam",
+                            public_id=f"gradcam_{unique_id}",
+                        )
+                    except Exception as exc:
+                        print(f"[BACKGROUND] Grad-CAM upload warning: {exc}")
+                        traceback.print_exc()
+            except Exception as exc:
+                print(f"[BACKGROUND] Grad-CAM warning: {exc}")
+                traceback.print_exc()
+                explanation_msg = "Prediction completed; visual explanation was temporarily unavailable."
+
+        final_gradcam_url = cloudinary_gradcam_url or overlay_local_url or ""
+
+        updated = database.update_screening_assets(
+            screening_id=screening_id,
+            heatmap_url=heatmap_local_url or "",
+            overlay_url=final_gradcam_url,
+            explanation=explanation_msg,
+        )
+        print(
+            f"[BACKGROUND] Screening {screening_id} assets updated={updated}; "
+            f"image={'yes' if cloudinary_original_url else 'no'}, "
+            f"gradcam={'yes' if final_gradcam_url else 'no'}"
+        )
+    except Exception as exc:
+        print(f"[BACKGROUND] Asset processing failed for screening {screening_id}: {exc}")
+        traceback.print_exc()
+    finally:
+        gc.collect()
+
+
 @app.post("/api/analyze")
 async def analyze(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     name: str = Form(None),
     age: int = Form(None),
@@ -134,7 +214,7 @@ async def analyze(
     patient_id: str = Form(None),
     contact: str = Form(None),
 ):
-    """Analyze a retinal image while prioritizing a successful prediction."""
+    """Analyze a retinal image without waiting for Grad-CAM/uploads."""
     total_start = time.perf_counter()
     print(f"[ANALYZE] Request received. File: {file.filename if file else 'None'}, Patient: {name or 'N/A'}")
 
@@ -144,8 +224,6 @@ async def analyze(
     file_bytes = None
     pil_image = None
     input_tensor = None
-    gradcam_tensor = None
-    cam_files = None
 
     try:
         read_start = time.perf_counter()
@@ -191,65 +269,6 @@ async def analyze(
             f"{prediction['class_name']} ({prediction['confidence']}%)"
         )
 
-        del input_tensor
-        input_tensor = None
-        gc.collect()
-
-        heatmap_local_url = None
-        overlay_local_url = None
-        explanation_msg = "Prediction completed."
-
-        if ENABLE_GRADCAM:
-            gradcam_start = time.perf_counter()
-            try:
-                model = model_service.get_model()
-                visualization_image = _make_visualization_image(pil_image)
-                gradcam_tensor = preprocess_image(visualization_image)
-                cam_files = generate_gradcam_images(
-                    model=model,
-                    input_tensor=gradcam_tensor,
-                    original_pil_image=visualization_image,
-                    class_idx=prediction["class_id"],
-                )
-                heatmap_local_url = f"/generated/{cam_files['heatmap_filename']}"
-                overlay_local_url = f"/generated/{cam_files['overlay_filename']}"
-                explanation_msg = "Grad-CAM highlights image regions that influenced the model prediction."
-                print(f"[ANALYZE] Grad-CAM: {time.perf_counter() - gradcam_start:.2f}s")
-            except Exception as exc:
-                print(f"[ANALYZE] Grad-CAM warning (prediction preserved): {exc}")
-                traceback.print_exc()
-                explanation_msg = "Prediction completed; visual explanation was temporarily unavailable."
-            finally:
-                gradcam_tensor = None
-                gc.collect()
-        else:
-            print("[ANALYZE] Grad-CAM skipped (ENABLE_GRADCAM=false)")
-
-        unique_id = uuid.uuid4().hex[:10]
-        local_overlay_path = os.path.join(GENERATED_DIR, cam_files["overlay_filename"]) if cam_files else None
-        cloudinary_original_url = None
-        cloudinary_gradcam_url = None
-        cloud_start = time.perf_counter()
-        try:
-            cloudinary_original_url = cloudinary_service.upload_image(
-                file_source=file_bytes,
-                folder="retinaai/retina-images",
-                public_id=f"retina_{unique_id}",
-            )
-            if local_overlay_path and os.path.isfile(local_overlay_path):
-                cloudinary_gradcam_url = cloudinary_service.upload_image(
-                    file_source=local_overlay_path,
-                    folder="retinaai/gradcam",
-                    public_id=f"gradcam_{unique_id}",
-                )
-            print(f"[ANALYZE] Cloudinary: {time.perf_counter() - cloud_start:.2f}s")
-        except Exception as exc:
-            print(f"[ANALYZE] Cloudinary warning: {exc}")
-            traceback.print_exc()
-
-        final_image_url = cloudinary_original_url or ""
-        final_gradcam_url = cloudinary_gradcam_url or overlay_local_url or ""
-
         db_record = None
         db_start = time.perf_counter()
         try:
@@ -262,9 +281,9 @@ async def analyze(
                 prediction=prediction["class_name"],
                 class_id=prediction["class_id"],
                 confidence=prediction["confidence"],
-                heatmap_url=heatmap_local_url or "",
-                overlay_url=final_gradcam_url,
-                explanation=explanation_msg,
+                heatmap_url="",
+                overlay_url="",
+                explanation="Prediction completed; visual explanation is being generated.",
             )
             print(f"[ANALYZE] Database: {time.perf_counter() - db_start:.2f}s")
         except Exception as exc:
@@ -281,8 +300,17 @@ async def analyze(
         }
         date_value = db_record["date"] if db_record else None
 
+        if record_id is not None:
+            background_tasks.add_task(
+                _process_background_assets,
+                record_id,
+                file_bytes,
+                pil_image,
+                prediction,
+            )
+
         elapsed = time.perf_counter() - total_start
-        print(f"[ANALYZE] TOTAL: {elapsed:.2f}s; prediction preserved={True}")
+        print(f"[ANALYZE] FAST RESPONSE TOTAL: {elapsed:.2f}s")
 
         return JSONResponse(content={
             "success": True,
@@ -296,20 +324,18 @@ async def analyze(
             "logits": prediction["logits"],
             "probabilities": prediction["probabilities"],
             "explanation": {
-                "message": explanation_msg,
-                "heatmap_url": heatmap_local_url,
-                "overlay_url": overlay_local_url,
+                "message": "Prediction completed; visual explanation is being generated.",
+                "heatmap_url": None,
+                "overlay_url": None,
             },
-            "image_url": final_image_url,
-            "gradcam_url": final_gradcam_url,
+            "image_url": "",
+            "gradcam_url": "",
+            "assets_pending": True,
             "date": date_value,
         })
 
     finally:
-        file_bytes = None
-        pil_image = None
         input_tensor = None
-        gradcam_tensor = None
         gc.collect()
 
 
